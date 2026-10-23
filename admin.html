@@ -53,6 +53,21 @@
   .program b { display:block; font-family:'Baloo 2',sans-serif; font-size:1.05rem; line-height:1.2; }
   .program span { display:block; font-size:.72rem; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:#f2b705; }
   @media (max-width:600px) { .kepala { flex-wrap:wrap; } .program { order:-1; width:100%; margin-bottom:.2rem; } .program b { font-size:.95rem; } }
+  .periode { display:flex; flex-wrap:wrap; gap:.6rem; align-items:center; background:#fff; border:2px solid var(--garis); border-radius:16px; padding:.7rem 1rem; margin-bottom:1rem; }
+  .periode label { font-weight:700; color:var(--hijau); margin:0; }
+  .periode .form-select, .periode .form-control { width:auto; padding:.4rem .6rem; font-size:1rem; }
+  .tabs { display:flex; gap:.5rem; margin-bottom:1rem; }
+  .tabs button { flex:1; border:2px solid var(--garis); background:#fff; border-radius:50px; padding:.5rem .6rem; font-weight:700; color:var(--hijau); font-family:'Baloo 2',sans-serif; font-size:1.05rem; }
+  .tabs button.aktif { background:linear-gradient(135deg,var(--hijau),#b9773a); color:#fff; border-color:var(--emas); box-shadow:0 3px 8px rgba(122,74,33,.3); }
+  .total-bar, .blok-h { display:flex; justify-content:space-between; align-items:center; gap:.5rem; color:#fff; font-weight:700; font-family:'Baloo 2',sans-serif; }
+  .total-bar { padding:.7rem 1rem; border-radius:16px; margin-bottom:1rem; font-size:1.15rem; }
+  .total-bar.Masuk, .blok-h.Masuk { background:#2e9e5b; } .total-bar.Keluar, .blok-h.Keluar { background:#d6453d; }
+  .blok { margin-bottom:1.1rem; }
+  .blok-h { padding:.5rem .9rem; border-radius:16px 16px 0 0; }
+  .blok .table-responsive { border-top-left-radius:0; border-top-right-radius:0; border-top:0 !important; }
+  .row .kotak.inv { background:#fff8e1 !important; border-color:#f2d680 !important; }
+  .kotak em { display:block; font-style:normal; font-size:.85rem; color:#8a6a4f; }
+  .catatan { color:#8a6a4f; font-size:.95rem; margin-bottom:1.5rem; }
 </style>
 </head>
 <body>
@@ -104,28 +119,138 @@
   </div>
 
   <h2 class="h5 mb-3">Riwayat transaksi</h2>
-  <div class="table-responsive bg-white border rounded">
-    <table class="table table-hover mb-0 buku">
-      <thead><tr><th>Tanggal</th><th>Keterangan</th><th class="text-end th-masuk">Pemasukan</th><th class="text-end th-keluar">Pengeluaran</th><th class="text-end">Saldo</th><th></th></tr></thead>
-      <tbody id="isi"><tr><td colspan="6" class="text-center text-muted">Memuat data...</td></tr></tbody>
-    </table>
+  <div class="periode">
+    <label for="mode">Periode:</label>
+    <select id="mode" class="form-select"><option value="bulan">Per bulan</option><option value="rentang">Rentang tanggal</option><option value="semua">Semua waktu</option></select>
+    <input type="month" id="inBulan" class="form-control">
+    <span id="boxRentang" class="d-none"><input type="date" id="dari" class="form-control d-inline-block"> s/d <input type="date" id="sampai" class="form-control d-inline-block"></span>
   </div>
+  <div class="tabs" id="tabs">
+    <button data-v="campuran" class="aktif">Campuran</button>
+    <button data-v="masuk">Pemasukan</button>
+    <button data-v="keluar">Pengeluaran</button>
+  </div>
+  <div id="isiTabel"></div>
 </main>
 
 <script>
 const API_URL = 'https://script.google.com/macros/s/AKfycbxIb7892M3_tzWNxdnX4ye1JZNdvG1KuuP2d17rpeiL9WbCmUPYpmHcNaraKqMInClR/exec';
+const ADMIN = true;
+const BULAN = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
 const KATEGORI = {
-  Masuk: ['Persembahan Ibadah', 'Sumbangan Jemaat', 'Donasi Pihak Luar', 'Pemasukan Lain-Lain'],
-  Keluar: ['Kebutuhan Gereja', 'Pemeliharaan Gereja', 'Bantuan Kemanusiaan', 'Pengeluaran Lain-Lain']
+  Masuk: ['Persembahan Ibadah Pendidikan', 'Persembahan Ibadah Pembangunan', 'Persembahan Ibadah Diakonia',
+          'Persembahan Ibadah Bulanan', 'Persembahan Hari Raya', 'Persembahan Khusus', 'Mantenan', 'Unduh-Unduh',
+          'Donasi Pihak Luar', 'Penarikan Investasi Jangka Panjang', 'Penarikan Investasi Jangka Pendek', 'Pemasukan Lain-Lain'],
+  Keluar: ['Kebutuhan Gereja', 'Pemeliharaan Gereja', 'Bantuan Kemanusiaan',
+           'Investasi Jangka Panjang', 'Investasi Jangka Pendek', 'Pengeluaran Lain-Lain']
 };
 const rp = n => 'Rp ' + Number(n).toLocaleString('id-ID');
-function tglIndo(t) {
-  const B = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
-  const [y, m, d] = t.split('-'); return d + ' ' + B[m-1] + ' ' + y;
-}
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const $ = id => document.getElementById(id);
-let dataSemua = [];
+let dataSemua = [], tampilan = 'campuran', dimuat = false;
+
+function tglIndo(t) { const [y, m, d] = t.split('-'); return d + ' ' + BULAN[m - 1].slice(0, 3) + ' ' + y; }
+
+// Tanggal WIB (Asia/Jakarta)
+function wib() {
+  const p = {};
+  new Intl.DateTimeFormat('id-ID', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' })
+    .formatToParts(new Date()).forEach(x => p[x.type] = x.value);
+  return { y: p.year, m: p.month, d: p.day };
+}
+
+const nilai = t => t.tipe === 'Masuk' ? t.nominal : -t.nominal;
+const aksi = t => ADMIN ? `<td class="text-nowrap"><button class="btn btn-sm btn-outline-success" onclick="edit('${esc(t.id)}')">Edit</button>
+        <button class="btn btn-sm btn-outline-danger ms-1" onclick="hapus('${esc(t.id)}')">Hapus</button></td>` : '';
+
+function rentang() {
+  const mode = $('mode').value;
+  if (mode === 'semua') return { dari: '0000-01-01', sampai: '9999-12-31', label: 'Semua waktu' };
+  if (mode === 'rentang') {
+    const d = $('dari').value, s = $('sampai').value;
+    return { dari: d || '0000-01-01', sampai: s || '9999-12-31',
+             label: (d ? tglIndo(d) : 'awal') + ' s/d ' + (s ? tglIndo(s) : 'sekarang') };
+  }
+  const w = wib(), v = $('inBulan').value || (w.y + '-' + w.m);
+  const [y, m] = v.split('-');
+  const akhir = String(new Date(y, m, 0).getDate()).padStart(2, '0');
+  return { dari: v + '-01', sampai: v + '-' + akhir, label: BULAN[m - 1] + ' ' + y };
+}
+
+function tabelCampuran(rows) {
+  const isi = rows.length ? rows.map(t => `
+    <tr>
+      <td class="text-nowrap">${tglIndo(t.tanggal)}</td>
+      <td>${esc(t.keterangan || '-')}<span class="kat">${esc(t.kategori)}</span></td>
+      <td class="text-end text-nowrap c-masuk">${t.tipe === 'Masuk' ? rp(t.nominal) : '-'}</td>
+      <td class="text-end text-nowrap c-keluar">${t.tipe === 'Keluar' ? rp(t.nominal) : '-'}</td>
+      <td class="text-end text-nowrap c-saldo">${rp(t.saldo)}</td>${aksi(t)}
+    </tr>`).join('') : `<tr><td colspan="${ADMIN ? 6 : 5}" class="text-center text-muted">Belum ada transaksi pada periode ini.</td></tr>`;
+  return `<div class="table-responsive"><table class="table table-hover mb-0 buku"><thead><tr><th>Tanggal</th><th>Keterangan</th><th class="text-end th-masuk">Pemasukan</th><th class="text-end th-keluar">Pengeluaran</th><th class="text-end">Saldo</th>${ADMIN ? '<th></th>' : ''}</tr></thead><tbody>${isi}</tbody></table></div>`;
+}
+
+function perJenis(rows, tipe) {
+  const semua = rows.filter(t => t.tipe === tipe).reverse();
+  const jumlah = l => l.reduce((a, t) => a + t.nominal, 0);
+  const daftar = KATEGORI[tipe].slice();
+  if (semua.some(t => !daftar.includes(t.kategori))) daftar.push('__lama');
+  let h = `<div class="total-bar ${tipe}"><span>Total ${tipe === 'Masuk' ? 'Pemasukan' : 'Pengeluaran'}</span><b>${rp(jumlah(semua))}</b></div>`;
+  daftar.forEach(k => {
+    const list = semua.filter(t => k === '__lama' ? !KATEGORI[tipe].includes(t.kategori) : t.kategori === k);
+    const isi = list.length ? list.map(t => `
+      <tr>
+        <td class="text-nowrap">${tglIndo(t.tanggal)}</td>
+        <td>${esc(t.keterangan || '-')}</td>
+        <td class="text-end text-nowrap ${tipe === 'Masuk' ? 'masuk' : 'keluar'}">${rp(t.nominal)}</td>${aksi(t)}
+      </tr>`).join('') : `<tr><td colspan="${ADMIN ? 4 : 3}" class="text-center text-muted">Belum ada transaksi.</td></tr>`;
+    h += `<div class="blok"><div class="blok-h ${tipe}"><span>${k === '__lama' ? 'Kategori lain (data lama)' : esc(k)}</span><b>${rp(jumlah(list))}</b></div>
+      <div class="table-responsive"><table class="table table-hover mb-0"><thead><tr><th>Tanggal</th><th>Keterangan</th><th class="text-end">Nominal</th>${ADMIN ? '<th></th>' : ''}</tr></thead><tbody>${isi}</tbody></table></div></div>`;
+  });
+  return h;
+}
+
+function render() {
+  if (!dimuat) return;
+  const r = rentang();
+  const urut = dataSemua.map((t, i) => ({ ...t, i })).sort((a, b) => a.tanggal.localeCompare(b.tanggal) || a.i - b.i);
+  let s = 0; urut.forEach(t => { s += nilai(t); t.saldo = s; });
+  const dalam = urut.filter(t => t.tanggal >= r.dari && t.tanggal <= r.sampai);
+
+  if ($('awal')) { // ringkasan + investasi (hanya halaman jemaat)
+    let awal = 0, masuk = 0, keluar = 0;
+    urut.forEach(t => { if (t.tanggal < r.dari) awal += nilai(t); });
+    dalam.forEach(t => { if (t.tipe === 'Masuk') masuk += t.nominal; else keluar += t.nominal; });
+    $('bulan').textContent = r.label;
+    $('awal').textContent = rp(awal); $('masuk').textContent = rp(masuk);
+    $('keluar').textContent = rp(keluar); $('akhir').textContent = rp(awal + masuk - keluar);
+    const sd = urut.filter(t => t.tanggal <= r.sampai);
+    const inv = k => sd.reduce((a, t) => a
+      + (t.tipe === 'Keluar' && t.kategori === 'Investasi ' + k ? t.nominal : 0)
+      - (t.tipe === 'Masuk' && t.kategori === 'Penarikan Investasi ' + k ? t.nominal : 0), 0);
+    const p = inv('Jangka Panjang'), q = inv('Jangka Pendek');
+    $('invPanjang').textContent = rp(p); $('invPendek').textContent = rp(q);
+    $('invTotal').textContent = 'Total dana investasi: ' + rp(p + q);
+  }
+  $('isiTabel').innerHTML = tampilan === 'campuran'
+    ? tabelCampuran(dalam.slice().reverse())
+    : perJenis(dalam, tampilan === 'masuk' ? 'Masuk' : 'Keluar');
+}
+
+function initPeriode() {
+  const w = wib(); $('inBulan').value = w.y + '-' + w.m;
+  const ganti = () => {
+    const m = $('mode').value;
+    $('inBulan').classList.toggle('d-none', m !== 'bulan');
+    $('boxRentang').classList.toggle('d-none', m !== 'rentang');
+    render();
+  };
+  ['mode', 'inBulan', 'dari', 'sampai'].forEach(id => $(id).addEventListener('change', ganti));
+  document.querySelectorAll('#tabs button').forEach(b => b.addEventListener('click', () => {
+    tampilan = b.dataset.v;
+    document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('aktif', x === b));
+    render();
+  }));
+}
 
 function isiKategori(pilih) {
   $('kategori').innerHTML = KATEGORI[$('tipe').value].map(k => `<option>${k}</option>`).join('');
@@ -133,10 +258,7 @@ function isiKategori(pilih) {
 }
 $('tipe').addEventListener('change', () => isiKategori());
 
-function hariIni() {
-  const d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-}
+function hariIni() { const w = wib(); return w.y + '-' + w.m + '-' + w.d; }
 
 function notif(teks, jenis) {
   const n = $('notif');
@@ -158,29 +280,10 @@ async function muat() {
     const res = await fetch(API_URL);
     const json = await res.json();
     if (json.status !== 'ok') throw new Error(json.message);
-    dataSemua = json.data.sort((a,b) => b.tanggal.localeCompare(a.tanggal));
-    tampil();
+    dataSemua = json.data; dimuat = true; render();
   } catch (e) {
-    $('isi').innerHTML = '<tr><td colspan="6" class="text-center text-danger">Data gagal dimuat. Periksa koneksi lalu muat ulang.</td></tr>';
+    $('isiTabel').innerHTML = '<div class="alert alert-danger">Data gagal dimuat. Periksa koneksi lalu muat ulang.</div>';
   }
-}
-
-function tampil() {
-  const data = dataSemua;
-  const urut = data.map((t, i) => ({ ...t, i })).sort((a, b) => a.tanggal.localeCompare(b.tanggal) || a.i - b.i);
-  let saldo = 0;
-  urut.forEach(t => { saldo += t.tipe === 'Masuk' ? t.nominal : -t.nominal; t.saldo = saldo; });
-  const terbaru = urut.reverse().slice(0, 50);
-  $('isi').innerHTML = terbaru.length ? terbaru.map(t => `
-    <tr>
-      <td class="text-nowrap">${tglIndo(t.tanggal)}</td>
-      <td>${esc(t.keterangan || '-')}<span class="kat">${esc(t.kategori)}</span></td>
-      <td class="text-end text-nowrap c-masuk">${t.tipe === 'Masuk' ? rp(t.nominal) : '-'}</td>
-      <td class="text-end text-nowrap c-keluar">${t.tipe === 'Keluar' ? rp(t.nominal) : '-'}</td>
-      <td class="text-end text-nowrap c-saldo">${rp(t.saldo)}</td>
-      <td class="text-nowrap"><button class="btn btn-sm btn-outline-success" onclick="edit('${esc(t.id)}')">Edit</button>
-        <button class="btn btn-sm btn-outline-danger ms-1" onclick="hapus('${esc(t.id)}')">Hapus</button></td>
-    </tr>`).join('') : '<tr><td colspan="6" class="text-center text-muted">Belum ada transaksi.</td></tr>';
 }
 
 function edit(id) {
@@ -195,7 +298,7 @@ function edit(id) {
   $('btnSimpan').textContent = 'Update';
   $('btnBatal').classList.remove('d-none');
   $('formKotak').classList.add('edit');
-  notif('', 'light'); $('notif').classList.add('d-none');
+  $('notif').classList.add('d-none');
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -253,6 +356,7 @@ async function simpan() {
   }
 }
 
+initPeriode();
 reset();
 muat();
 </script>
