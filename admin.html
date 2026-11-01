@@ -96,6 +96,8 @@
         <select id="tipe" class="form-select">
           <option value="Masuk">Pemasukan</option>
           <option value="Keluar">Pengeluaran</option>
+          <option value="Setor">Setor ke Investasi (kas berkurang)</option>
+          <option value="Tarik">Tarik dari Investasi (kas bertambah)</option>
         </select>
       </div>
       <div class="col-md-6">
@@ -252,10 +254,20 @@ function initPeriode() {
   }));
 }
 
+// Daftar kategori di form. Setor/Tarik investasi dipisah supaya tidak tertukar dengan pemasukan/pengeluaran biasa.
+const INV = { 'Jangka Panjang': 'Jangka Panjang (dana pensiunan pendeta)', 'Jangka Pendek': 'Jangka Pendek (kebutuhan urgen)' };
 function isiKategori(pilih) {
-  $('kategori').innerHTML = KATEGORI[$('tipe').value].map(k => `<option>${k}</option>`).join('');
+  const j = $('tipe').value;
+  let opsi;
+  if (j === 'Setor' || j === 'Tarik') opsi = Object.keys(INV).map(k => `<option value="${k}">${INV[k]}</option>`);
+  else opsi = KATEGORI[j].filter(k => !/^(Penarikan )?Investasi /.test(k)).map(k => `<option>${k}</option>`);
+  $('kategori').innerHTML = opsi.join('');
   if (pilih) $('kategori').value = pilih;
 }
+// Saldo investasi per jenis dari daftar transaksi
+const saldoInv = (list, jenis) => list.reduce((a, t) => a
+  + (t.tipe === 'Keluar' && t.kategori === 'Investasi ' + jenis ? t.nominal : 0)
+  - (t.tipe === 'Masuk' && t.kategori === 'Penarikan Investasi ' + jenis ? t.nominal : 0), 0);
 $('tipe').addEventListener('change', () => isiKategori());
 
 function hariIni() { const w = wib(); return w.y + '-' + w.m + '-' + w.d; }
@@ -291,7 +303,9 @@ function edit(id) {
   if (!t) return;
   $('id').value = t.id;
   $('tanggal').value = t.tanggal;
-  $('tipe').value = t.tipe; isiKategori(t.kategori);
+  if (t.tipe === 'Keluar' && /^Investasi /.test(t.kategori)) { $('tipe').value = 'Setor'; isiKategori(t.kategori.replace(/^Investasi /, '')); }
+  else if (t.tipe === 'Masuk' && /^Penarikan Investasi /.test(t.kategori)) { $('tipe').value = 'Tarik'; isiKategori(t.kategori.replace(/^Penarikan Investasi /, '')); }
+  else { $('tipe').value = t.tipe; isiKategori(t.kategori); }
   $('nominal').value = t.nominal;
   $('keterangan').value = t.keterangan;
   $('judulForm').textContent = 'Ubah transaksi';
@@ -323,17 +337,26 @@ async function hapus(id) {
 }
 
 async function simpan() {
+  const jenis = $('tipe').value, kat = $('kategori').value;
   const payload = {
     id: $('id').value,
     tanggal: $('tanggal').value,
-    tipe: $('tipe').value,
-    kategori: $('kategori').value,
+    tipe: jenis === 'Setor' ? 'Keluar' : jenis === 'Tarik' ? 'Masuk' : jenis,
+    kategori: jenis === 'Setor' ? 'Investasi ' + kat : jenis === 'Tarik' ? 'Penarikan Investasi ' + kat : kat,
     keterangan: $('keterangan').value.trim(),
     nominal: Number($('nominal').value)
   };
   if (!payload.tanggal || !(payload.nominal > 0)) {
     return notif('Isi tanggal dan nominal terlebih dahulu.', 'warning');
   }
+  // Pemeriksaan saldo (transaksi yang sedang diedit tidak ikut dihitung)
+  const lain = dataSemua.filter(x => x.id !== payload.id);
+  if (jenis === 'Tarik' && payload.nominal > saldoInv(lain, kat)) {
+    return notif('Saldo Investasi ' + kat + ' hanya ' + rp(saldoInv(lain, kat)) + ', tidak cukup untuk ditarik ' + rp(payload.nominal) + '. Catat dulu setoran ke investasinya.', 'warning');
+  }
+  const kas = lain.reduce((a, t) => a + nilai(t), 0);
+  if (payload.tipe === 'Keluar' && kas - payload.nominal < 0 &&
+      !confirm('Saldo kas saat ini ' + rp(kas) + ', tidak cukup untuk ' + rp(payload.nominal) + '. Pastikan pemasukannya sudah dicatat.\n\nTetap simpan?')) return;
   const btn = $('btnSimpan'), label = btn.textContent;
   btn.disabled = true; btn.textContent = 'Menyimpan...';
   try {
